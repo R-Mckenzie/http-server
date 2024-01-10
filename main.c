@@ -89,12 +89,16 @@ int main()
 
         printf("[%s:%u] %s %s %s\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port), method, uri, version);
 
-        if (strcmp(uri, "/") == 0) {
-            strcpy(uri, "index.html");
-        }
-        printf("URI: %s\n", uri);
+        char* stripped_uri = uri;
+        stripped_uri++; // skip leading '/'
 
-        FILE* f = fopen(uri, "r");
+        if (strcmp(stripped_uri, "") == 0) {
+            strcpy(stripped_uri, "index.html");
+        } else {
+        }
+        printf("URI: %s\n", stripped_uri);
+
+        FILE* f = fopen(stripped_uri, "r");
         if (f == NULL) {
             char notfound[] = "HTTP/1.1 404 Not Found\n";
             int writeErr = send(newosockFD, notfound, strlen(notfound), 0);
