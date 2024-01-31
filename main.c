@@ -2,16 +2,82 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <unistd.h>
 
 #define MAXBUFLEN 1024
 #define MAX_HTML_LEN 10240
+#define BUFFER_SIZE 104857600
 
-int sendall(int sock, char* buf, int* len)
+const char* file_extension(const char* filename)
+{
+    const char* ext = strrchr(filename, '.');
+    if (!ext || ext == filename) {
+        return "";
+    } else {
+        return ext + 1;
+    }
+}
+
+const char* mime_type(const char* ext)
+{
+    if (strcasecmp(ext, "html") == 0 || strcasecmp(ext, "htm") == 0) {
+        return "text/html";
+    } else if (strcasecmp(ext, "css") == 0) {
+        return "text/css";
+    } else if (strcasecmp(ext, "txt") == 0) {
+        return "text/plain";
+    } else if (strcasecmp(ext, "jpg") == 0 || strcasecmp(ext, "jpeg")) {
+        return "image/jpeg";
+    } else if (strcasecmp(ext, "png") == 0) {
+        return "image/png";
+    } else {
+        return "application/octet-stream";
+    }
+}
+
+void build_http_response(const char* file_name, const char* filetype, char* response, size_t* response_len)
+{
+    int fd = open(file_name, O_RDONLY);
+    if (fd == -1) {
+        snprintf(response, BUFFER_SIZE,
+            "HTTP/1.1 404 Not Found\r\n"
+            "Content-Type: text/plain\r\n"
+            "\r\n"
+            "404 Not Found");
+        *response_len = strlen(response);
+        return;
+    }
+
+    char* header = (char*)malloc(BUFFER_SIZE * sizeof(char));
+    snprintf(header, BUFFER_SIZE,
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: %s\r\n"
+        "\r\n",
+        mime_type(filetype));
+
+    struct stat file_stat;
+    fstat(fd, &file_stat);
+    off_t filesize = file_stat.st_size;
+
+    *response_len = 0;
+    memcpy(response, header, strlen(header));
+    *response_len += strlen(header);
+
+    ssize_t bytes_read;
+    while ((bytes_read = read(fd, response + *response_len, BUFFER_SIZE - *response_len)) > 0) {
+        *response_len += bytes_read;
+    }
+    free(header);
+    close(fd);
+}
+
+int sendall(int sock, char* buf, size_t* len)
 {
     int total = 0; // bytes we've sent
     int bytesleft = *len; // bytes left to send
@@ -92,41 +158,16 @@ int main()
         char* stripped_uri = uri;
         stripped_uri++; // skip leading '/'
 
-        if (strcmp(stripped_uri, "") == 0) {
-            strcpy(stripped_uri, "index.html");
-        } else {
+        if (strncmp(stripped_uri, "", 1) == 0) {
+            strlcpy(stripped_uri, "index.html", sizeof("index.html"));
         }
         printf("URI: %s\n", stripped_uri);
 
-        FILE* f = fopen(stripped_uri, "r");
-        if (f == NULL) {
-            char notfound[] = "HTTP/1.1 404 Not Found\n";
-            int writeErr = send(newosockFD, notfound, strlen(notfound), 0);
-            if (writeErr == -1) {
-                perror("write");
-                return 1;
-            }
-        } else {
-            char ok[] = "HTTP/1.1 200 OK\n"
-                        "Content-Type: text/html\n\n";
-            int len = strlen(ok);
-            sendall(newosockFD, ok, &len);
-
-            // HEADER
-
-            // HTML
-            char html[MAX_HTML_LEN + 1];
-            size_t newLen = fread(html, sizeof(char), MAX_HTML_LEN, f);
-            if (ferror(f) != 0) {
-                fputs("Error reading file", stderr);
-            } else {
-                html[newLen++] = '\0'; /* Just to be safe. */
-            }
-
-            len = strlen(html);
-            sendall(newosockFD, html, &len);
-        }
-        fclose(f);
+        char* response = (char*)malloc(BUFFER_SIZE * 2 * sizeof(char));
+        size_t response_len;
+        build_http_response(stripped_uri, file_extension(stripped_uri), response, &response_len);
+        sendall(newosockFD, response, &response_len);
+        free(response);
         close(newosockFD);
     }
 
